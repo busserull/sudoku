@@ -2,6 +2,8 @@ use nu_ansi_term as ansi;
 use std::fmt;
 use std::path::Path;
 
+const MAX_SOLUTIONS: usize = 5_000;
+
 #[derive(Debug, Clone, Copy)]
 struct GridCellOptions([bool; 9]);
 
@@ -124,6 +126,7 @@ impl fmt::Display for GridCell {
 
 enum GridError {
     Inconsistent,
+    TooManySolutions,
 }
 
 #[derive(Clone, Copy)]
@@ -152,15 +155,19 @@ impl Grid {
         Self(cells)
     }
 
-    fn solve(mut self) -> Vec<Grid> {
+    fn solve(mut self) -> Result<Vec<Grid>, GridError> {
         let mut solutions = Vec::new();
 
-        self.explore_solutions(&mut solutions);
+        self.explore_solutions(&mut solutions)?;
 
-        solutions
+        Ok(solutions)
     }
 
-    fn explore_solutions(&mut self, solutions: &mut Vec<Grid>) {
+    fn explore_solutions(&mut self, solutions: &mut Vec<Grid>) -> Result<(), GridError> {
+        if solutions.len() > MAX_SOLUTIONS {
+            return Err(GridError::TooManySolutions);
+        }
+
         if let Some((trial_index, options)) = self.first_unsolved_cell() {
             let backtrack = self.clone();
 
@@ -169,12 +176,14 @@ impl Grid {
                 self.0[trial_index].set(guess);
 
                 if self.reduce().is_ok() {
-                    self.explore_solutions(solutions);
+                    self.explore_solutions(solutions)?;
                 }
             }
         } else {
             solutions.push(self.clone());
         }
+
+        Ok(())
     }
 
     fn first_unsolved_cell(&self) -> Option<(usize, GridCellOptions)> {
@@ -309,11 +318,19 @@ impl fmt::Display for Grid {
 fn main() {
     let grid = Grid::new("b2");
 
-    let solutions = grid.solve();
+    match grid.solve() {
+        Ok(solutions) => {
+            println!("Number of solutions: {}", solutions.len());
 
-    println!("Number of solutions: {}", solutions.iter().count());
+            for (index, solution) in solutions.iter().enumerate() {
+                println!("\nSolution {}:\n{}", index + 1, solution);
+            }
+        }
 
-    for (index, solution) in solutions.iter().enumerate() {
-        println!("\nSolution {}:\n{}", index + 1, solution);
+        Err(GridError::TooManySolutions) => {
+            println!("Grid has more than {} solutions", MAX_SOLUTIONS)
+        }
+
+        _ => unreachable!(),
     }
 }
