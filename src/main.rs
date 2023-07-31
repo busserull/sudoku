@@ -152,30 +152,29 @@ impl Grid {
         Self(cells)
     }
 
-    fn solve(&mut self) -> Result<(), GridError> {
-        self.reduce()?;
+    fn solve(mut self) -> Vec<Grid> {
+        let mut solutions = Vec::new();
 
-        if self.is_solved() {
-            return Ok(());
-        }
+        self.explore_solutions(&mut solutions);
 
-        let backtrack = self.clone();
-        let (trial_index, options) = self.first_unsolved_cell().unwrap();
-
-        for guess in options {
-            self.0 = backtrack.0.clone();
-            self.0[trial_index].set(guess);
-
-            if self.solve().is_ok() {
-                return Ok(());
-            }
-        }
-
-        Err(GridError::Inconsistent)
+        solutions
     }
 
-    fn is_solved(&self) -> bool {
-        self.0.iter().all(|cell| cell.unique)
+    fn explore_solutions(&mut self, solutions: &mut Vec<Grid>) {
+        if let Some((trial_index, options)) = self.first_unsolved_cell() {
+            let backtrack = self.clone();
+
+            for guess in options {
+                self.0 = backtrack.0.clone();
+                self.0[trial_index].set(guess);
+
+                if self.reduce().is_ok() {
+                    self.explore_solutions(solutions);
+                }
+            }
+        } else {
+            solutions.push(self.clone());
+        }
     }
 
     fn first_unsolved_cell(&self) -> Option<(usize, GridCellOptions)> {
@@ -308,11 +307,13 @@ impl fmt::Display for Grid {
 }
 
 fn main() {
-    let mut grid = Grid::new("b3");
+    let grid = Grid::new("b2");
 
-    if grid.solve().is_ok() {
-        println!("{}", grid);
-    } else {
-        println!("Inconsistent grid");
+    let solutions = grid.solve();
+
+    println!("Number of solutions: {}", solutions.iter().count());
+
+    for (index, solution) in solutions.iter().enumerate() {
+        println!("\nSolution {}:\n{}", index + 1, solution);
     }
 }
