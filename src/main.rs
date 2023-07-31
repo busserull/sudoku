@@ -132,7 +132,7 @@ struct Grid([GridCell; 81]);
 impl Grid {
     fn new<P: AsRef<Path>>(path: P) -> Self {
         let mut cells = [GridCell::new(None); 81];
-        let file = std::fs::read_to_string(path).expect("cannot read game file");
+        let file = std::fs::read_to_string(path).expect("cannot read grid file");
 
         let mut grid_index = 0;
         for ch in file.chars() {
@@ -265,25 +265,50 @@ impl Grid {
 
 impl fmt::Display for Grid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            f,
+            "\u{250c}{}\u{252c}{}\u{252c}{}\u{2510}",
+            "\u{2500}".repeat(10),
+            "\u{2500}".repeat(11),
+            "\u{2500}".repeat(10)
+        )?;
+
         for (index, cell) in self.0.iter().enumerate() {
+            if index % 9 == 0 {
+                write!(f, "\u{2502}")?;
+            }
+
             write!(f, " {} ", cell)?;
 
             if index == 80 {
+                write!(f, "\u{2502}")?;
             } else if (index + 1) % 27 == 0 {
-                writeln!(f, "\n{}", "-".repeat(33))?;
+                writeln!(
+                    f,
+                    "\u{2502}\n\u{251c}{}\u{253c}{}\u{253c}{}\u{2524}",
+                    "\u{2500}".repeat(10),
+                    "\u{2500}".repeat(11),
+                    "\u{2500}".repeat(10)
+                )?;
             } else if (index + 1) % 9 == 0 {
-                writeln!(f, "")?;
+                writeln!(f, "\u{2502}")?;
             } else if (index + 1) % 3 == 0 {
-                write!(f, " | ")?;
+                write!(f, " \u{2502} ")?;
             }
         }
 
-        Ok(())
+        write!(
+            f,
+            "\n\u{2514}{}\u{2534}{}\u{2534}{}\u{2518}",
+            "\u{2500}".repeat(10),
+            "\u{2500}".repeat(11),
+            "\u{2500}".repeat(10)
+        )
     }
 }
 
 fn main() {
-    let mut grid = Grid::new("hard");
+    let mut grid = Grid::new("b3");
 
     if grid.solve().is_ok() {
         println!("{}", grid);
