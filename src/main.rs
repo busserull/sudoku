@@ -2,27 +2,59 @@ use nu_ansi_term as ansi;
 use std::fmt;
 use std::path::Path;
 
+#[derive(Debug, Clone, Copy)]
+struct GridCellOptions([bool; 9]);
+
+impl GridCellOptions {
+    fn new() -> Self {
+        Self([false; 9])
+    }
+
+    fn is_set(&self, value: Option<usize>) -> bool {
+        value.map(|value| self.0[value]).unwrap_or(false)
+    }
+
+    fn set(&mut self, value: Option<usize>) {
+        if let Some(value) = value {
+            self.0[value] = true;
+        }
+    }
+}
+
+impl Iterator for GridCellOptions {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(option) = self.0.iter().position(|option| *option) {
+            self.0[option] = false;
+            Some(option)
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
-struct SCell {
+struct GridCell {
     given: bool,
-    set: bool,
+    unique: bool,
     options: [bool; 9],
 }
 
-impl SCell {
+impl GridCell {
     fn new(index: Option<usize>) -> Self {
         if let Some(index) = index {
             let mut options = [false; 9];
             options[index] = true;
 
             Self {
-                set: true,
+                unique: true,
                 given: true,
                 options,
             }
         } else {
             Self {
-                set: false,
+                unique: false,
                 given: false,
                 options: [true; 9],
             }
@@ -33,33 +65,50 @@ impl SCell {
         self.options.iter().filter(|&&x| x).count()
     }
 
-    fn index(&self) -> Option<usize> {
-        self.set
+    fn options(&self) -> GridCellOptions {
+        GridCellOptions(self.options.clone())
+    }
+
+    fn value(&self) -> Option<usize> {
+        self.unique
             .then(|| self.options.iter().position(|&x| x).unwrap())
     }
 
-    fn remove(&mut self, index: usize) -> bool {
-        let count_before = self.count();
+    fn set(&mut self, value: usize) {
+        self.options = [false; 9];
+        self.options[value] = true;
+        self.unique = true;
+    }
 
-        if !self.set {
-            self.options[index] = false;
+    fn remove(&mut self, options: &GridCellOptions) -> usize {
+        if self.unique {
+            return 0;
+        }
+
+        let mut options_removed = 0;
+
+        for (option, &to_remove) in self.options.iter_mut().zip(options.0.iter()) {
+            if to_remove {
+                options_removed += *option as usize;
+                *option = false;
+            }
         }
 
         if self.count() == 1 {
-            self.set = true;
+            self.unique = true;
         }
 
-        count_before != self.count()
+        options_removed
     }
 }
 
-impl fmt::Debug for SCell {
+impl fmt::Display for GridCell {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(index) = self.index() {
+        if let Some(value) = self.value() {
             let digit = if self.given {
-                ansi::Color::Blue.bold().paint(format!("{}", index + 1))
+                ansi::Color::Blue.bold().paint(format!("{}", value + 1))
             } else {
-                ansi::Color::Green.paint(format!("{}", index + 1))
+                ansi::Color::Green.paint(format!("{}", value + 1))
             };
 
             write!(f, "{}", digit)
@@ -67,84 +116,121 @@ impl fmt::Debug for SCell {
             write!(
                 f,
                 "{}",
-                ansi::Color::Yellow.paint(format!("{}", self.count()))
+                ansi::Color::Magenta.paint(format!("{}", self.count()))
             )
         }
     }
 }
 
-impl fmt::Display for SCell {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let symbol = self
-            .index()
-            .map(|index| format!("{}", index + 1))
-            .unwrap_or_else(|| "_".to_string());
+enum GridError {
+    Inconsistent,
+}
 
-        if self.given {
-            write!(f, "{}", ansi::Color::Blue.bold().paint(symbol))
-        } else {
-            write!(f, "{}", symbol)
+#[derive(Clone, Copy)]
+struct Grid([GridCell; 81]);
+
+impl Grid {
+    fn new<P: AsRef<Path>>(path: P) -> Self {
+        let mut cells = [GridCell::new(None); 81];
+        let file = std::fs::read_to_string(path).expect("cannot read game file");
+
+        let mut grid_index = 0;
+        for ch in file.chars() {
+            match ch {
+                'x' => grid_index += 1,
+
+                '1'..='9' => {
+                    let digit = ch as usize - '0' as usize;
+                    cells[grid_index] = GridCell::new(Some(digit - 1));
+                    grid_index += 1;
+                }
+
+                _ => (),
+            }
         }
+
+        Self(cells)
     }
-}
 
-struct Game {
-    grid: [SCell; 81],
-}
+    fn solve(&mut self) -> Result<(), GridError> {
+        self.reduce()?;
 
-impl Game {
-    fn remove_illegal_options(&mut self) {
+        if self.is_solved() {
+            return Ok(());
+        }
+
+        let backtrack = self.clone();
+        let (trial_index, options) = self.first_unsolved_cell().unwrap();
+
+        for guess in options {
+            self.0 = backtrack.0.clone();
+            self.0[trial_index].set(guess);
+
+            if self.solve().is_ok() {
+                return Ok(());
+            }
+        }
+
+        Err(GridError::Inconsistent)
+    }
+
+    fn is_solved(&self) -> bool {
+        self.0.iter().all(|cell| cell.unique)
+    }
+
+    fn first_unsolved_cell(&self) -> Option<(usize, GridCellOptions)> {
+        self.0
+            .iter()
+            .enumerate()
+            .find_map(|(index, cell)| (!cell.unique).then(|| (index, cell.options())))
+    }
+
+    fn reduce(&mut self) -> Result<(), GridError> {
         loop {
             let mut options_removed = 0;
 
             for number in 0..9 {
-                options_removed += self.ex_group(number);
-                options_removed += self.ex_row(number);
-                options_removed += self.ex_column(number);
+                let boxed = self.reduce_grid_box(number);
+                let row = self.reduce_grid_row(number);
+                let column = self.reduce_grid_column(number);
+
+                match (boxed, row, column) {
+                    (Ok(b), Ok(r), Ok(c)) => options_removed += b + r + c,
+                    _ => return Err(GridError::Inconsistent),
+                }
             }
 
             if options_removed == 0 {
                 break;
             }
         }
+
+        Ok(())
     }
 
-    fn ex_group(&mut self, box_number: usize) -> usize {
-        let start_index = match box_number {
-            0 => 0,
-            1 => 3,
-            2 => 6,
-            3 => 27,
-            4 => 30,
-            5 => 33,
-            6 => 54,
-            7 => 57,
-            8 => 60,
-            _ => unreachable!(),
-        };
-
+    fn reduce_grid_box(&mut self, box_number: usize) -> Result<usize, GridError> {
+        let offset = (box_number / 3) * 27 + (box_number % 3) * 3;
         let mut indices = [0, 1, 2, 9, 10, 11, 18, 19, 20];
 
         for index in indices.iter_mut() {
-            *index += start_index;
+            *index += offset;
         }
 
         self.remove_options(&indices)
     }
 
-    fn ex_row(&mut self, row_number: usize) -> usize {
-        let start_index = 9 * row_number;
-
+    fn reduce_grid_row(&mut self, row_number: usize) -> Result<usize, GridError> {
+        let offset = 9 * row_number;
         let mut indices = [0, 1, 2, 3, 4, 5, 6, 7, 8];
 
         for index in indices.iter_mut() {
-            *index += start_index;
+            *index += offset;
         }
 
         self.remove_options(&indices)
     }
 
-    fn ex_column(&mut self, column_number: usize) -> usize {
+    fn reduce_grid_column(&mut self, column_number: usize) -> Result<usize, GridError> {
         let mut indices = [0, 9, 18, 27, 36, 45, 54, 63, 72];
 
         for index in indices.iter_mut() {
@@ -154,82 +240,32 @@ impl Game {
         self.remove_options(&indices)
     }
 
-    fn remove_options(&mut self, indices: &[usize]) -> usize {
-        let mut set_indices = [false; 9];
+    fn remove_options(&mut self, indices: &[usize]) -> Result<usize, GridError> {
+        let mut set_options = GridCellOptions::new();
 
-        for &index in indices.iter() {
-            if let Some(index) = self.grid[index].index() {
-                set_indices[index] = true;
+        for &index in indices {
+            let value = self.0[index].value();
+
+            if set_options.is_set(value) {
+                return Err(GridError::Inconsistent);
             }
-        }
 
-        let set_indices: Vec<usize> = set_indices
-            .iter()
-            .enumerate()
-            .filter(|&(_, &is_set)| is_set)
-            .map(|(index, _)| index)
-            .collect();
+            set_options.set(value);
+        }
 
         let mut options_removed = 0;
 
-        for &index in indices.iter() {
-            for &to_remove in set_indices.iter() {
-                if self.grid[index].remove(to_remove) {
-                    options_removed += 1;
-                }
-            }
+        for &index in indices {
+            options_removed += self.0[index].remove(&set_options);
         }
 
-        options_removed
+        Ok(options_removed)
     }
 }
 
-impl Game {
-    fn new<P: AsRef<Path>>(path: P) -> Self {
-        let mut grid = [SCell::new(None); 81];
-        let content = std::fs::read_to_string(path).expect("cannot read game file");
-
-        let mut grid_index = 0;
-        for ch in content.chars() {
-            match ch {
-                'x' => grid_index += 1,
-
-                '1'..='9' => {
-                    let digit = ch as usize - '0' as usize;
-                    grid[grid_index] = SCell::new(Some(digit - 1));
-                    grid_index += 1;
-                }
-
-                _ => (),
-            }
-        }
-
-        Game { grid }
-    }
-}
-
-impl fmt::Debug for Game {
+impl fmt::Display for Grid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (index, cell) in self.grid.iter().enumerate() {
-            write!(f, " {:?} ", cell)?;
-
-            if index == 80 {
-            } else if (index + 1) % 27 == 0 {
-                writeln!(f, "\n{}", "-".repeat(33))?;
-            } else if (index + 1) % 9 == 0 {
-                writeln!(f, "")?;
-            } else if (index + 1) % 3 == 0 {
-                write!(f, " | ")?;
-            }
-        }
-
-        Ok(())
-    }
-}
-
-impl fmt::Display for Game {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (index, cell) in self.grid.iter().enumerate() {
+        for (index, cell) in self.0.iter().enumerate() {
             write!(f, " {} ", cell)?;
 
             if index == 80 {
@@ -247,11 +283,11 @@ impl fmt::Display for Game {
 }
 
 fn main() {
-    let mut game = Game::new("hard");
+    let mut grid = Grid::new("hard");
 
-    println!("Before solving:\n{}\n\n", game);
-
-    game.remove_illegal_options();
-
-    println!("After removing illegal options:\n{:?}", game);
+    if grid.solve().is_ok() {
+        println!("{}", grid);
+    } else {
+        println!("Inconsistent grid");
+    }
 }
