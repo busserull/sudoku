@@ -50,7 +50,6 @@ impl Iterator for GridCellOptions {
 #[derive(Clone, Copy)]
 struct GridCell {
     given: bool,
-    unique: bool,
     options: GridCellOptions,
 }
 
@@ -60,17 +59,19 @@ impl GridCell {
             let options = GridCellOptions::single(value);
 
             Self {
-                unique: true,
                 given: true,
                 options,
             }
         } else {
             Self {
-                unique: false,
                 given: false,
                 options: GridCellOptions::all(),
             }
         }
+    }
+
+    fn unique(&self) -> bool {
+        self.count() == 1
     }
 
     fn count(&self) -> usize {
@@ -82,17 +83,16 @@ impl GridCell {
     }
 
     fn value(&self) -> Option<usize> {
-        self.unique
+        self.unique()
             .then(|| self.options.0.iter().position(|&x| x).unwrap())
     }
 
     fn set(&mut self, value: usize) {
         self.options = GridCellOptions::single(value);
-        self.unique = true;
     }
 
     fn remove(&mut self, options: &GridCellOptions) -> usize {
-        if self.unique {
+        if self.unique() {
             return 0;
         }
 
@@ -103,10 +103,6 @@ impl GridCell {
                 options_removed += *option as usize;
                 *option = false;
             }
-        }
-
-        if self.count() == 1 {
-            self.unique = true;
         }
 
         options_removed
@@ -129,8 +125,38 @@ impl fmt::Display for GridCell {
     }
 }
 
-enum GridError {
-    Inconsistent,
+enum GridDeduction {
+    NoChange,
+    Consistent,
+    Conflict,
+}
+
+impl GridDeduction {
+    fn is_consistent(&self) -> bool {
+        matches!(self, GridDeduction::Consistent)
+    }
+
+    fn no_conflict(&self) -> bool {
+        !matches!(self, GridDeduction::Conflict)
+    }
+}
+
+impl std::ops::BitAndAssign for GridDeduction {
+    fn bitand_assign(&mut self, rhs: Self) {
+        use GridDeduction::*;
+
+        let deduction = match (&self, rhs) {
+            (Conflict, _) => Conflict,
+            (_, Conflict) => Conflict,
+
+            (Consistent, _) => Consistent,
+            (_, Consistent) => Consistent,
+
+            _ => NoChange,
+        };
+
+        *self = deduction
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -181,7 +207,7 @@ impl Grid {
                 self.0 = backtrack.0.clone();
                 self.0[trial_index].set(guess);
 
-                if self.deduce().is_ok() {
+                if self.deduce().no_conflict() {
                     self.find_solutions(solutions, max_solutions);
                 }
             }
@@ -194,33 +220,26 @@ impl Grid {
         self.0
             .iter()
             .enumerate()
-            .find_map(|(index, cell)| (!cell.unique).then(|| (index, cell.options())))
+            .find_map(|(index, cell)| (!cell.unique()).then(|| (index, cell.options())))
     }
 
-    fn deduce(&mut self) -> Result<(), GridError> {
-        loop {
-            let mut options_removed = 0;
+    fn deduce(&mut self) -> GridDeduction {
+        let mut result = GridDeduction::Consistent;
+
+        while result.is_consistent() {
+            result = GridDeduction::NoChange;
 
             for number in 0..9 {
-                let boxed = self.deduce_box(number);
-                let row = self.deduce_row(number);
-                let column = self.deduce_column(number);
-
-                match (boxed, row, column) {
-                    (Ok(b), Ok(r), Ok(c)) => options_removed += b + r + c,
-                    _ => return Err(GridError::Inconsistent),
-                }
-            }
-
-            if options_removed == 0 {
-                break;
+                result &= self.deduce_box(number);
+                result &= self.deduce_row(number);
+                result &= self.deduce_column(number);
             }
         }
 
-        Ok(())
+        result
     }
 
-    fn deduce_box(&mut self, box_number: usize) -> Result<usize, GridError> {
+    fn deduce_box(&mut self, box_number: usize) -> GridDeduction {
         let offset = (box_number / 3) * 27 + (box_number % 3) * 3;
         let mut indices = [0, 1, 2, 9, 10, 11, 18, 19, 20];
 
@@ -231,7 +250,7 @@ impl Grid {
         self.remove_options(&indices)
     }
 
-    fn deduce_row(&mut self, row_number: usize) -> Result<usize, GridError> {
+    fn deduce_row(&mut self, row_number: usize) -> GridDeduction {
         let offset = 9 * row_number;
         let mut indices = [0, 1, 2, 3, 4, 5, 6, 7, 8];
 
@@ -242,7 +261,7 @@ impl Grid {
         self.remove_options(&indices)
     }
 
-    fn deduce_column(&mut self, column_number: usize) -> Result<usize, GridError> {
+    fn deduce_column(&mut self, column_number: usize) -> GridDeduction {
         let mut indices = [0, 9, 18, 27, 36, 45, 54, 63, 72];
 
         for index in indices.iter_mut() {
@@ -252,26 +271,29 @@ impl Grid {
         self.remove_options(&indices)
     }
 
-    fn remove_options(&mut self, indices: &[usize]) -> Result<usize, GridError> {
+    fn remove_options(&mut self, indices: &[usize]) -> GridDeduction {
         let mut set_options = GridCellOptions::none();
 
         for &index in indices {
             let value = self.0[index].value();
 
             if set_options.is_set(value) {
-                return Err(GridError::Inconsistent);
+                return GridDeduction::Conflict;
             }
 
             set_options.set(value);
         }
 
-        let mut options_removed = 0;
+        let options_removed: usize = indices
+            .iter()
+            .map(|&index| self.0[index].remove(&set_options))
+            .sum();
 
-        for &index in indices {
-            options_removed += self.0[index].remove(&set_options);
+        if options_removed == 0 {
+            GridDeduction::NoChange
+        } else {
+            GridDeduction::Consistent
         }
-
-        Ok(options_removed)
     }
 }
 
