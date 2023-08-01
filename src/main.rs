@@ -1,8 +1,31 @@
 use nu_ansi_term as ansi;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-// use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Solve a Sudoku puzzle
+    Solve {
+        /// Sudoku grid file
+        grid_file: PathBuf,
+
+        /// Solution search cutoff
+        #[arg(short = 's', long, default_value_t = 12)]
+        max_solutions: usize,
+    },
+
+    /// Generate a Sudoku puzzle
+    Make,
+}
 
 #[derive(Debug, Clone, Copy)]
 struct GridCellOptions([bool; 9]);
@@ -342,15 +365,23 @@ impl fmt::Display for Grid {
 }
 
 fn main() {
-    let grid = Grid::new("none");
+    let cli = Cli::parse();
 
-    println!("Unsolved:\n{}", grid);
+    match cli.command {
+        Commands::Solve {
+            grid_file,
+            max_solutions,
+        } => {
+            let grid = Grid::new(grid_file);
+            println!("Unsolved:\n{}", grid);
 
-    let solutions = grid.solve(Some(5));
+            let solutions = grid.solve(Some(max_solutions));
 
-    println!("Number of solutions: {}", solutions.iter().count());
+            for (index, solution) in solutions.iter().enumerate() {
+                println!("\nSolution {}:\n{}", index + 1, solution);
+            }
+        }
 
-    for (index, solution) in solutions.iter().enumerate() {
-        println!("\nSolution {}:\n{}", index + 1, solution);
+        Commands::Make => (),
     }
 }
