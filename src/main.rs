@@ -130,14 +130,13 @@ enum GridError {
 struct Grid([GridCell; 81]);
 
 impl Grid {
-    fn new<P: AsRef<Path>>(path: P) -> Self {
+    fn new(grid_string: &str) -> Self {
         let mut cells = [GridCell::new(None); 81];
-        let file = std::fs::read_to_string(path).expect("cannot read grid file");
 
         let mut grid_index = 0;
-        for ch in file.chars() {
+        for ch in grid_string.chars() {
             match ch {
-                'x' => grid_index += 1,
+                'x' | '0' => grid_index += 1,
 
                 '1'..='9' => {
                     let digit = ch as usize - '0' as usize;
@@ -306,14 +305,58 @@ impl fmt::Display for Grid {
     }
 }
 
-fn main() {
-    let grid = Grid::new("b2");
+struct GridReader(Vec<String>);
 
-    let solutions = grid.solve();
-
-    println!("Number of solutions: {}", solutions.iter().count());
-
-    for (index, solution) in solutions.iter().enumerate() {
-        println!("\nSolution {}:\n{}", index + 1, solution);
+impl GridReader {
+    fn new<P: AsRef<Path>>(path: P) -> Self {
+        Self(
+            std::fs::read_to_string(path)
+                .expect("cannot read grid file")
+                .lines()
+                .rev()
+                .map(String::from)
+                .collect(),
+        )
     }
+}
+
+impl Iterator for GridReader {
+    type Item = String;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.pop();
+
+        let mut grid = String::new();
+
+        for _ in 0..9 {
+            if let Some(row) = self.0.pop() {
+                grid.push_str(&row);
+            } else {
+                return None;
+            }
+        }
+
+        Some(grid)
+    }
+}
+
+fn main() {
+    let grid_reader = GridReader::new("p096_sudoku.txt");
+
+    let mut top_sum = 0;
+
+    for grid_string in grid_reader {
+        let grid = Grid::new(&grid_string);
+
+        let solution = grid.solve()[0];
+
+        let top_left = (solution.0[0].value().unwrap() + 1) * 100
+            + (solution.0[1].value().unwrap() + 1) * 10
+            + solution.0[2].value().unwrap()
+            + 1;
+
+        top_sum += top_left;
+    }
+
+    println!("{}", top_sum);
 }
