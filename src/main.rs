@@ -2,12 +2,25 @@ use nu_ansi_term as ansi;
 use std::fmt;
 use std::path::Path;
 
+// use clap::{Parser, Subcommand};
+
 #[derive(Debug, Clone, Copy)]
 struct GridCellOptions([bool; 9]);
 
 impl GridCellOptions {
-    fn new() -> Self {
+    fn all() -> Self {
+        Self([true; 9])
+    }
+
+    fn none() -> Self {
         Self([false; 9])
+    }
+
+    fn single(value: usize) -> Self {
+        let mut options = [false; 9];
+        options[value] = true;
+
+        Self(options)
     }
 
     fn is_set(&self, value: Option<usize>) -> bool {
@@ -38,14 +51,13 @@ impl Iterator for GridCellOptions {
 struct GridCell {
     given: bool,
     unique: bool,
-    options: [bool; 9],
+    options: GridCellOptions,
 }
 
 impl GridCell {
-    fn new(index: Option<usize>) -> Self {
-        if let Some(index) = index {
-            let mut options = [false; 9];
-            options[index] = true;
+    fn new(value: Option<usize>) -> Self {
+        if let Some(value) = value {
+            let options = GridCellOptions::single(value);
 
             Self {
                 unique: true,
@@ -56,27 +68,26 @@ impl GridCell {
             Self {
                 unique: false,
                 given: false,
-                options: [true; 9],
+                options: GridCellOptions::all(),
             }
         }
     }
 
     fn count(&self) -> usize {
-        self.options.iter().filter(|&&x| x).count()
+        self.options.0.iter().filter(|&&x| x).count()
     }
 
     fn options(&self) -> GridCellOptions {
-        GridCellOptions(self.options.clone())
+        self.options.clone()
     }
 
     fn value(&self) -> Option<usize> {
         self.unique
-            .then(|| self.options.iter().position(|&x| x).unwrap())
+            .then(|| self.options.0.iter().position(|&x| x).unwrap())
     }
 
     fn set(&mut self, value: usize) {
-        self.options = [false; 9];
-        self.options[value] = true;
+        self.options = GridCellOptions::single(value);
         self.unique = true;
     }
 
@@ -87,7 +98,7 @@ impl GridCell {
 
         let mut options_removed = 0;
 
-        for (option, &to_remove) in self.options.iter_mut().zip(options.0.iter()) {
+        for (option, &to_remove) in self.options.0.iter_mut().zip(options.0.iter()) {
             if to_remove {
                 options_removed += *option as usize;
                 *option = false;
@@ -113,11 +124,7 @@ impl fmt::Display for GridCell {
 
             write!(f, "{}", digit)
         } else {
-            write!(
-                f,
-                "{}",
-                ansi::Color::Magenta.paint(format!("{}", self.count()))
-            )
+            write!(f, "\u{25aa}")
         }
     }
 }
@@ -152,15 +159,21 @@ impl Grid {
         Self(cells)
     }
 
-    fn solve(mut self) -> Vec<Grid> {
+    fn solve(mut self, max_solutions: Option<usize>) -> Vec<Grid> {
         let mut solutions = Vec::new();
 
-        self.explore_solutions(&mut solutions);
+        self.find_solutions(&mut solutions, max_solutions);
 
         solutions
     }
 
-    fn explore_solutions(&mut self, solutions: &mut Vec<Grid>) {
+    fn find_solutions(&mut self, solutions: &mut Vec<Grid>, max_solutions: Option<usize>) {
+        if let Some(max) = max_solutions {
+            if solutions.len() > max {
+                return;
+            }
+        }
+
         if let Some((trial_index, options)) = self.first_unsolved_cell() {
             let backtrack = self.clone();
 
@@ -168,8 +181,8 @@ impl Grid {
                 self.0 = backtrack.0.clone();
                 self.0[trial_index].set(guess);
 
-                if self.reduce().is_ok() {
-                    self.explore_solutions(solutions);
+                if self.deduce().is_ok() {
+                    self.find_solutions(solutions, max_solutions);
                 }
             }
         } else {
@@ -184,14 +197,14 @@ impl Grid {
             .find_map(|(index, cell)| (!cell.unique).then(|| (index, cell.options())))
     }
 
-    fn reduce(&mut self) -> Result<(), GridError> {
+    fn deduce(&mut self) -> Result<(), GridError> {
         loop {
             let mut options_removed = 0;
 
             for number in 0..9 {
-                let boxed = self.reduce_grid_box(number);
-                let row = self.reduce_grid_row(number);
-                let column = self.reduce_grid_column(number);
+                let boxed = self.deduce_box(number);
+                let row = self.deduce_row(number);
+                let column = self.deduce_column(number);
 
                 match (boxed, row, column) {
                     (Ok(b), Ok(r), Ok(c)) => options_removed += b + r + c,
@@ -207,7 +220,7 @@ impl Grid {
         Ok(())
     }
 
-    fn reduce_grid_box(&mut self, box_number: usize) -> Result<usize, GridError> {
+    fn deduce_box(&mut self, box_number: usize) -> Result<usize, GridError> {
         let offset = (box_number / 3) * 27 + (box_number % 3) * 3;
         let mut indices = [0, 1, 2, 9, 10, 11, 18, 19, 20];
 
@@ -218,7 +231,7 @@ impl Grid {
         self.remove_options(&indices)
     }
 
-    fn reduce_grid_row(&mut self, row_number: usize) -> Result<usize, GridError> {
+    fn deduce_row(&mut self, row_number: usize) -> Result<usize, GridError> {
         let offset = 9 * row_number;
         let mut indices = [0, 1, 2, 3, 4, 5, 6, 7, 8];
 
@@ -229,7 +242,7 @@ impl Grid {
         self.remove_options(&indices)
     }
 
-    fn reduce_grid_column(&mut self, column_number: usize) -> Result<usize, GridError> {
+    fn deduce_column(&mut self, column_number: usize) -> Result<usize, GridError> {
         let mut indices = [0, 9, 18, 27, 36, 45, 54, 63, 72];
 
         for index in indices.iter_mut() {
@@ -240,7 +253,7 @@ impl Grid {
     }
 
     fn remove_options(&mut self, indices: &[usize]) -> Result<usize, GridError> {
-        let mut set_options = GridCellOptions::new();
+        let mut set_options = GridCellOptions::none();
 
         for &index in indices {
             let value = self.0[index].value();
@@ -307,9 +320,11 @@ impl fmt::Display for Grid {
 }
 
 fn main() {
-    let grid = Grid::new("b2");
+    let grid = Grid::new("hard");
 
-    let solutions = grid.solve();
+    println!("Unsolved:\n{}", grid);
+
+    let solutions = grid.solve(Some(100));
 
     println!("Number of solutions: {}", solutions.iter().count());
 
