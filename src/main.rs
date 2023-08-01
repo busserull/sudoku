@@ -185,17 +185,17 @@ impl Grid {
         Self(cells)
     }
 
-    fn solve(mut self, max_solutions: Option<usize>) -> Vec<Grid> {
+    fn solve(mut self, solutions_cutoff: Option<usize>) -> Vec<Grid> {
         let mut solutions = Vec::new();
 
-        self.find_solutions(&mut solutions, max_solutions);
+        self.find_solutions(&mut solutions, solutions_cutoff);
 
         solutions
     }
 
-    fn find_solutions(&mut self, solutions: &mut Vec<Grid>, max_solutions: Option<usize>) {
-        if let Some(max) = max_solutions {
-            if solutions.len() > max {
+    fn find_solutions(&mut self, solutions: &mut Vec<Grid>, cutoff: Option<usize>) {
+        if let Some(max) = cutoff {
+            if solutions.len() >= max {
                 return;
             }
         }
@@ -208,7 +208,7 @@ impl Grid {
                 self.0[trial_index].set(guess);
 
                 if self.deduce().no_conflict() {
-                    self.find_solutions(solutions, max_solutions);
+                    self.find_solutions(solutions, cutoff);
                 }
             }
         } else {
@@ -342,11 +342,11 @@ impl fmt::Display for Grid {
 }
 
 fn main() {
-    let grid = Grid::new("hard");
+    let grid = Grid::new("none");
 
     println!("Unsolved:\n{}", grid);
 
-    let solutions = grid.solve(Some(100));
+    let solutions = grid.solve(Some(5));
 
     println!("Number of solutions: {}", solutions.iter().count());
 
