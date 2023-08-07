@@ -208,6 +208,41 @@ impl Grid {
         Self(cells)
     }
 
+    fn generate(seed: u64) -> Self {
+        let mut rand = Random::new(seed);
+
+        let mut grid = Self([GridCell::new(None); 81]);
+
+        let mut iterations = 0;
+        loop {
+            let backtrack = grid.clone();
+
+            let cell = rand.range(0, 81) as usize;
+            let value = rand.range(0, 9) as usize;
+
+            grid.0[cell].set(value);
+
+            let solutions = grid.solve(2);
+
+            if solutions.len() == 1 {
+                break;
+            }
+
+            if solutions.is_empty() {
+                grid = backtrack;
+            }
+            iterations += 1;
+        }
+
+        println!("Generated in {} iterations", iterations);
+
+        for cell in 0..81 {
+            grid.0[cell].given = true;
+        }
+
+        grid
+    }
+
     fn solve(mut self, solutions_cutoff: usize) -> Vec<Grid> {
         let mut solutions = Vec::new();
 
@@ -318,6 +353,53 @@ impl Grid {
     }
 }
 
+/// The "Belts-and-Suspenders" PRNG from the
+/// third edition of Numerical Recipes
+struct Random(u64, u64, u64);
+
+impl Random {
+    fn new(seed: u64) -> Self {
+        let v = 4101842887655102017;
+        let mut generator = Self(seed ^ v, v, 1);
+
+        generator.get();
+        generator.1 = generator.0;
+
+        generator.get();
+        generator.2 = generator.1;
+
+        generator.get();
+
+        generator
+    }
+
+    fn get(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(2862933555777941757)
+            .wrapping_add(7046029254386353087);
+
+        self.1 ^= self.1.wrapping_shr(17);
+        self.1 ^= self.1.wrapping_shl(31);
+        self.1 ^= self.1.wrapping_shr(8);
+
+        let base: u64 = 4294957665;
+        self.2 = base
+            .wrapping_mul(self.2 & 0xffff_ffff)
+            .wrapping_add(self.2.wrapping_shr(32));
+
+        let mut x = self.0 ^ (self.0.wrapping_shl(21));
+        x ^= x.wrapping_shr(35);
+        x ^= x.wrapping_shl(4);
+
+        x.wrapping_add(self.1) ^ self.2
+    }
+
+    fn range(&mut self, min: u64, max: u64) -> u64 {
+        min + self.get() % (max - min)
+    }
+}
+
 impl fmt::Display for Grid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(
@@ -384,6 +466,9 @@ fn main() {
             }
         }
 
-        Commands::Make => (),
+        Commands::Make => {
+            let grid = Grid::generate(17);
+            println!("{}", grid);
+        }
     }
 }
