@@ -208,7 +208,7 @@ impl Grid {
         Self(cells)
     }
 
-    fn solve(mut self, solutions_cutoff: Option<usize>) -> Vec<Grid> {
+    fn solve(mut self, solutions_cutoff: usize) -> Vec<Grid> {
         let mut solutions = Vec::new();
 
         self.find_solutions(&mut solutions, solutions_cutoff);
@@ -216,11 +216,9 @@ impl Grid {
         solutions
     }
 
-    fn find_solutions(&mut self, solutions: &mut Vec<Grid>, cutoff: Option<usize>) {
-        if let Some(max) = cutoff {
-            if solutions.len() >= max {
-                return;
-            }
+    fn find_solutions(&mut self, solutions: &mut Vec<Grid>, cutoff: usize) {
+        if solutions.len() >= cutoff {
+            return;
         }
 
         if let Some((trial_index, options)) = self.first_unsolved_cell() {
@@ -375,10 +373,14 @@ fn main() {
             let grid = Grid::new(grid_file);
             println!("Unsolved:\n{}", grid);
 
-            let solutions = grid.solve(Some(max_solutions));
+            let solutions = grid.solve(max_solutions);
 
             for (index, solution) in solutions.iter().enumerate() {
                 println!("\nSolution {}:\n{}", index + 1, solution);
+            }
+
+            if solutions.len() == max_solutions {
+                println!("\nGrid may have additional solutions");
             }
         }
 
