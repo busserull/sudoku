@@ -1,6 +1,7 @@
 use nu_ansi_term as ansi;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use clap::{Parser, Subcommand};
 
@@ -24,7 +25,10 @@ enum Commands {
     },
 
     /// Generate a Sudoku puzzle
-    Make,
+    Make {
+        /// Random seed
+        seed: Option<u64>,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -108,6 +112,10 @@ impl GridCell {
     fn value(&self) -> Option<usize> {
         self.unique()
             .then(|| self.options.0.iter().position(|&x| x).unwrap())
+    }
+
+    fn is_legal(&self, value: usize) -> bool {
+        self.options.0[value]
     }
 
     fn set(&mut self, value: usize) {
@@ -209,35 +217,76 @@ impl Grid {
     }
 
     fn generate(seed: u64) -> Self {
-        let mut rand = Random::new(seed);
-
         let mut grid = Self([GridCell::new(None); 81]);
 
-        let mut iterations = 0;
-        loop {
-            let backtrack = grid.clone();
+        let mut rand = Random::new(seed);
 
-            let cell = rand.range(0, 81) as usize;
-            let value = rand.range(0, 9) as usize;
+        let mut digits = [0, 1, 2, 3, 4, 5, 6, 7, 8];
 
-            grid.0[cell].set(value);
+        let box_indices = [
+            [0, 1, 2, 9, 10, 11, 18, 19, 20],
+            [30, 31, 32, 39, 40, 41, 48, 49, 50],
+            [60, 61, 62, 69, 70, 71, 78, 79, 80],
+        ];
+
+        for indices in box_indices.iter() {
+            rand.shuffle(&mut digits);
+
+            for (&index, &digit) in indices.iter().zip(digits.iter()) {
+                grid.0[index].set(digit);
+            }
+        }
+
+        grid.deduce();
+
+        let mut cell_indices: Vec<usize> = (0..81).into_iter().collect();
+        rand.shuffle(&mut cell_indices);
+
+        'all: for &cell in cell_indices.iter() {
+            if grid.0[cell].unique() {
+                continue;
+            }
+
+            rand.shuffle(&mut digits);
+
+            let digit = digits
+                .iter()
+                .find(|&&digit| grid.0[cell].is_legal(digit))
+                .copied()
+                .expect("no legal values in cell");
+
+            let backtrace = grid.clone();
+
+            grid.0[cell].set(digit);
 
             let solutions = grid.solve(2);
 
-            if solutions.len() == 1 {
-                break;
+            if solutions.is_empty() {
+                grid = backtrace;
+            } else if solutions.len() == 1 {
+                grid = solutions.first().cloned().unwrap();
+                break 'all;
             }
 
-            if solutions.is_empty() {
-                grid = backtrack;
-            }
-            iterations += 1;
+            grid.deduce();
         }
 
-        println!("Generated in {} iterations", iterations);
+        rand.shuffle(&mut cell_indices);
 
-        for cell in 0..81 {
-            grid.0[cell].given = true;
+        for cell in cell_indices {
+            let backtrace = grid.clone();
+
+            grid.0[cell].options = GridCellOptions::all();
+
+            if grid.solve(2).len() != 1 {
+                grid = backtrace;
+            }
+        }
+
+        for cell in grid.0.iter_mut() {
+            if cell.unique() {
+                cell.given = true;
+            }
         }
 
         grid
@@ -398,6 +447,13 @@ impl Random {
     fn range(&mut self, min: u64, max: u64) -> u64 {
         min + self.get() % (max - min)
     }
+
+    fn shuffle<T>(&mut self, list: &mut [T]) {
+        for i in 0..list.len() - 2 {
+            let j = self.range(i as u64, list.len() as u64) as usize;
+            list.swap(i, j);
+        }
+    }
 }
 
 impl fmt::Display for Grid {
@@ -466,8 +522,16 @@ fn main() {
             }
         }
 
-        Commands::Make => {
-            let grid = Grid::generate(17);
+        Commands::Make { seed } => {
+            let seed = seed.unwrap_or_else(|| {
+                SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .expect("cannot poll system time")
+                    .as_micros() as u64
+            });
+
+            let grid = Grid::generate(seed);
+
             println!("{}", grid);
         }
     }
